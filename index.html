@@ -111,7 +111,7 @@
 <header class="top">
   <span class="tag">Demo · clínica de ejemplo</span>
   <h1>Agente de WhatsApp para clínicas</h1>
-  <p>A la izquierda, lo que ve el paciente en WhatsApp. A la derecha, lo que ve la recepción de la clínica. Pide una cita y mira cómo aparece en la agenda. Activa “Simular falla del sistema” para ver qué pasa si la cita no se puede guardar.</p>
+  <p>A la izquierda, lo que ve el paciente en WhatsApp. A la derecha, lo que ve la recepción de la clínica. Pide una cita y mira cómo aparece en la agenda. Activa “Simular falla del sistema” para ver qué pasa si la cita no se puede guardar, o cierra una sede para ver cómo el bot avisa y reprograma a los pacientes.</p>
 </header>
 
 <div class="wrap">
@@ -139,6 +139,8 @@
         <label class="switch"><input type="checkbox" id="fail"> Simular falla del sistema de la clínica</label>
         <button class="btn" id="reset">Reiniciar demo</button>
       </div>
+      <p class="sub" style="margin:14px 0 8px">Cerrar una sede por un problema (corte de luz, falla, emergencia):</p>
+      <div class="row" id="closeBox"></div>
     </div>
 
     <div class="card">
@@ -209,11 +211,16 @@
   const MONTHS = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
   const SEED_BUSY = [['Rosa M.','Limpieza dental'],['Jorge T.','Consulta general'],['Ana L.','Ortodoncia'],['Luis P.','Consulta general'],['Carla V.','Blanqueamiento'],['Pedro S.','Limpieza dental']];
   const SEDES = [
-    {id:'ate', name:'Sede Ate', addr:'Av. Ejemplo 123, Ate (frente al parque)', doc:'Dra. Paredes', busy:[[0,1],[0,4],[0,6],[1,0],[1,2],[1,5],[2,3],[2,7]]},
-    {id:'sa', name:'Sede Santa Anita', addr:'Av. Ejemplo 456, Santa Anita', doc:'Dr. Quispe', busy:[[0,0],[0,2],[0,3],[0,5],[0,7],[1,1],[1,4],[2,0],[2,6]]},
-    {id:'lm', name:'Sede La Molina', addr:'Av. Ejemplo 789, La Molina', doc:'Dra. Salazar', busy:[[0,6],[1,3],[1,7],[2,2],[2,5]]}
+    {id:'ate', name:'Sede Ate', addr:'Av. Ejemplo 123, Ate (frente al parque)', doc:'Dra. Paredes', services:['limp','cons','blan','orto'], busy:[[0,1],[0,4],[0,6],[1,0],[1,2],[1,5],[2,3],[2,7]]},
+    {id:'sa', name:'Sede Santa Anita', addr:'Av. Ejemplo 456, Santa Anita', doc:'Dr. Quispe', services:['limp','cons','orto'], busy:[[0,0],[0,2],[0,3],[0,5],[0,7],[1,1],[1,4],[2,0],[2,6]]},
+    {id:'lm', name:'Sede La Molina', addr:'Av. Ejemplo 789, La Molina', doc:'Dra. Salazar', services:['limp','cons','blan'], busy:[[0,6],[1,3],[1,7],[2,2],[2,5]]}
   ];
   const sedeById = id => SEDES.find(s=>s.id===id);
+  const svcById = id => SERVICES.find(s=>s.id===id);
+  let closed={};
+  const offers = (sd,svc) => sd.services.includes(svc.id);
+  const isOpen = sd => !closed[sd.id];
+  const names = list => list.map(x=>x.name.replace('Sede ','')).join(' y ');
 
   const $ = id => document.getElementById(id);
   const chat=$('chat'), feed=$('feed');
@@ -229,18 +236,18 @@
   function now(){ const d=new Date(); return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); }
 
   function init(){
-    days=nextWorkdays(3); agenda={}; selDay=0; selSede='ate'; state={step:'menu'}; pendingSlots={};
+    days=nextWorkdays(3); agenda={}; closed={}; selDay=0; selSede='ate'; state={step:'menu'}; pendingSlots={};
     SEDES.forEach((sd,j)=>sd.busy.forEach((p,i)=>{ const s=SEED_BUSY[(i+j)%SEED_BUSY.length]; agenda[key(sd.id,p[0],HOURS[p[1]])]={type:'busy',who:s[0],what:s[1]}; }));
     chat.innerHTML=''; feed.innerHTML='<div class="empty" id="feedEmpty">Todavía no hay avisos.</div>';
-    resetSteps(); renderDays(); renderSlots();
+    resetSteps(); renderClose(); renderDays(); renderSlots();
     setTimeout(()=>botSay('¡Hola! 👋 Soy el asistente virtual de Clínica Dental Sonríe.\nTe puedo ayudar a ver precios, agendar tu cita o resolver dudas. ¿Qué necesitas?', mainMenu), 300);
   }
 
   /* ---------- Agenda panel ---------- */
   function renderDays(){
     const sb=$('sedes'); sb.innerHTML='';
-    SEDES.forEach(sd=>{ const b=document.createElement('button'); b.textContent=sd.name; if(sd.id===selSede) b.className='on'; b.onclick=()=>{selSede=sd.id;renderDays();renderSlots();}; sb.appendChild(b); });
-    $('docName').textContent=sedeById(selSede).name+' · '+sedeById(selSede).doc+' (ejemplo)';
+    SEDES.forEach(sd=>{ const b=document.createElement('button'); b.textContent=sd.name+(closed[sd.id]?' (cerrada)':''); if(sd.id===selSede) b.className='on'; b.onclick=()=>{selSede=sd.id;renderDays();renderSlots();}; sb.appendChild(b); });
+    $('docName').textContent=sedeById(selSede).name+' · '+sedeById(selSede).doc+' (ejemplo)'+(closed[selSede]?' · ⚠️ CERRADA TEMPORALMENTE':'');
     const box=$('days'); box.innerHTML='';
     days.forEach((d,i)=>{ const b=document.createElement('button'); b.textContent=dayLabel(d); if(i===selDay) b.className='on'; b.onclick=()=>{selDay=i;renderDays();renderSlots();}; box.appendChild(b); });
   }
@@ -258,6 +265,31 @@
   }
   function freeHours(s,i){ return HOURS.filter(h=>!agenda[key(s,i,h)]); }
   function freeInSede(s){ return days.reduce((n,d,i)=>n+freeHours(s,i).length,0); }
+
+  /* ---------- Cerrar sede ---------- */
+  function renderClose(){
+    const box=$('closeBox'); box.innerHTML='';
+    SEDES.forEach(sd=>{
+      const l=document.createElement('label'); l.className='switch';
+      const c=document.createElement('input'); c.type='checkbox'; c.checked=!!closed[sd.id];
+      c.onchange=()=>setClosed(sd.id,c.checked);
+      l.appendChild(c); l.appendChild(document.createTextNode(' '+sd.name)); box.appendChild(l);
+    });
+  }
+  function setClosed(id,on){
+    const sd=sedeById(id); closed[id]=on; selSede=id; renderDays(); renderSlots();
+    if(!on){ notify('ok','✓',sd.name+' volvió a atender','El agente ya la ofrece otra vez a los pacientes'); return; }
+    const others=Object.keys(agenda).filter(k=>k.startsWith(id+'|') && agenda[k].type==='busy').length;
+    notify('bad','!',sd.name+' cerrada temporalmente','El agente dejó de ofrecerla y avisó por WhatsApp a '+others+' pacientes con cita para cambiarla');
+    Object.keys(agenda).filter(k=>k.startsWith(id+'|') && agenda[k].svc).forEach(k=>{
+      const a=agenda[k], parts=k.split('|'), d=+parts[1], h=parts[2], svc=svcById(a.svc);
+      notify('warn','!','Cita afectada: '+a.who,svc.name+' · '+sd.name+' · '+dayLabel(days[d])+' '+h+' · el agente le ofreció cambiarla');
+      botSay('Hola '+a.who.split(' ')[0]+', te escribimos de Clínica Dental Sonríe. 🙏 Por un problema que no estaba en nuestras manos, '+sd.name+' no podrá atender por ahora.\n\nTu cita de '+svc.name+' del '+dayLabel(days[d])+' a las '+h+' necesita cambiarse. Disculpa la molestia. ¿Qué prefieres?',()=>choices([
+        ['📍 Pasarla a otra sede',()=>{ delete agenda[k]; renderSlots(); resetSteps(); pickService(svc); }],
+        ['🙋 Que me llame recepción',human]
+      ]),900);
+    });
+  }
 
   /* ---------- Feed ---------- */
   function notify(kind,icon,title,detail,action){
@@ -298,11 +330,11 @@
   function backMenu(){ choices([['📅 Agendar una cita',startBooking],['Volver al menú',()=>botSay('¿En qué más te ayudo?',mainMenu)]]); }
 
   function showPrices(){
-    const txt='Estos son nuestros servicios:\n\n'+SERVICES.map(s=>'• '+s.name+': '+s.price+' ('+s.dur+')').join('\n')+'\n\nTodos los precios incluyen la evaluación de la doctora.';
+    const txt='Estos son nuestros servicios:\n\n'+SERVICES.map(s=>{ const w=SEDES.filter(sd=>offers(sd,s)); return '• '+s.name+': '+s.price+' ('+s.dur+')'+(w.length<SEDES.length?'\n   Solo en: '+names(w):''); }).join('\n')+'\n\nTodos los precios incluyen la evaluación de la doctora.';
     botSay(txt,backMenu,900);
   }
   function showInfo(){
-    botSay('🕘 Atendemos de lunes a sábado.\nMañanas de 9:00 a 13:00 y tardes de 15:00 a 19:00.\n\nTenemos '+SEDES.length+' sedes:\n'+SEDES.map(s=>'📍 '+s.name+': '+s.addr).join('\n')+'\n\nPuedes pagar con efectivo, tarjeta o Yape.',backMenu,900);
+    botSay('🕘 Atendemos de lunes a sábado.\nMañanas de 9:00 a 13:00 y tardes de 15:00 a 19:00.\n\nTenemos '+SEDES.length+' sedes:\n'+SEDES.map(s=>'📍 '+s.name+': '+s.addr+(closed[s.id]?'\n   ⚠️ Cerrada temporalmente':'')).join('\n')+'\n\nPuedes pagar con efectivo, tarjeta o Yape.',backMenu,900);
   }
   function human(){
     state.step='human';
@@ -323,9 +355,29 @@
   }
   function pickService(s){
     state.service=s;
-    if(SEDES.length===1){ return pickSede(SEDES[0].id); }
+    const ok=SEDES.filter(sd=>offers(sd,s)&&isOpen(sd));
+    const noSvc=SEDES.filter(sd=>!offers(sd,s));
+    const shut=SEDES.filter(sd=>offers(sd,s)&&!isOpen(sd));
+    let notes='';
+    if(SEDES.length>1 && noSvc.length) notes+='ℹ️ '+s.name+' no se realiza en '+names(noSvc)+'.\n';
+    if(SEDES.length>1 && shut.length) notes+='⚠️ '+names(shut)+(shut.length>1?' están cerradas':' está cerrada')+' temporalmente por un problema.\n';
+    if(!ok.length){
+      state.step='menu';
+      botSay((notes?notes+'\n':'')+'Por ahora no tengo '+s.name+' disponible en ninguna sede. 😕\n\nSi quieres, te anoto en la lista de espera y recepción te escribe apenas haya espacio.',()=>choices([['📝 Anotarme en lista de espera',()=>waitlist(s)],['Ver otro servicio',startBooking]]));
+      return;
+    }
+    if(ok.length===1){
+      if(SEDES.length===1) return pickSede(ok[0].id);
+      botSay((notes?notes+'\n':'')+'Para '+s.name+' te puedo atender en '+ok[0].name+': '+ok[0].addr+'.',()=>pickSede(ok[0].id));
+      return;
+    }
     state.step='sede';
-    botSay('¿En qué sede te queda mejor atenderte? 📍\n\n'+SEDES.map(sd=>'• '+sd.name+': '+sd.addr).join('\n'),()=>choices(SEDES.map(sd=>[sd.name,()=>pickSede(sd.id)])));
+    botSay((notes?notes+'\n':'')+'¿En qué sede te queda mejor atenderte? 📍\n\n'+ok.map(sd=>'• '+sd.name+': '+sd.addr).join('\n'),()=>choices(ok.map(sd=>[sd.name,()=>pickSede(sd.id)])));
+  }
+  function waitlist(s){
+    state={step:'menu'};
+    botSay('Listo, te anoté en la lista de espera para '+s.name+'. 📝 Apenas se libere un espacio, recepción te escribe por aquí.',backMenu);
+    notify('info','i','Paciente en lista de espera',s.name+' · avisarle cuando haya espacio');
   }
   function pickSede(id){
     const sd=sedeById(id);
@@ -334,8 +386,10 @@
     botSay('Estoy revisando la agenda de '+sd.name+'… 🔎',()=>{
       const opts=days.map((d,i)=>[dayLabel(d)+' ('+freeHours(id,i).length+' libres)',()=>pickDay(i)]).filter((o,i)=>freeHours(id,i).length>0);
       if(!opts.length){
-        const others=SEDES.filter(x=>x.id!==id && freeInSede(x.id)>0);
-        botSay('Esta semana '+sd.name+' ya no tiene espacio. 😕 ¿Te sirve otra sede?',()=>choices(others.map(x=>[x.name,()=>pickSede(x.id)])),600);
+        const others=SEDES.filter(x=>x.id!==id && isOpen(x) && offers(x,state.service) && freeInSede(x.id)>0);
+        const wl=['📝 Lista de espera en '+sd.name,()=>waitlist(state.service)];
+        if(!others.length){ botSay('Esta semana '+sd.name+' ya no tiene espacio y las otras sedes tampoco tienen '+state.service.name+' libre. 😕 ¿Te anoto en la lista de espera?',()=>choices([wl,['Ver otro servicio',startBooking]]),600); return; }
+        botSay('Esta semana '+sd.name+' ya no tiene espacio. 😕 Pero sí tengo '+state.service.name+' en:',()=>choices(others.map(x=>[x.name+' ('+freeInSede(x.id)+' horarios libres)',()=>pickSede(x.id)]).concat([wl])),600);
         return;
       }
       botSay('Estos días tienen espacio en '+sd.name+':',()=>choices(opts),600);
@@ -369,17 +423,17 @@
         setStep('s2','done'); setStep('s3', failed?'fail':'on');
         setTimeout(()=>{
           if(!failed){
-            agenda[k]={type:'bot',who:st.name,what:s.name}; selDay=st.day; selSede=st.sede; renderDays(); renderSlots(k);
+            agenda[k]={type:'bot',who:st.name,what:s.name,svc:s.id}; selDay=st.day; selSede=st.sede; renderDays(); renderSlots(k);
             setStep('s3','done'); setStep('s4','done');
             const code='CS-'+(codeN++);
             notify('ok','✓','Nueva cita agendada por el agente',st.name+' · '+s.name+' · '+sedeById(st.sede).name+' · '+dayLabel(days[st.day])+' '+st.hour+' · código '+code);
             botSay('✅ ¡Listo! Tu cita quedó registrada en la agenda de la clínica.\n\nCódigo: '+code+'\n📅 '+dayLabel(days[st.day])+', '+st.hour+'\n📍 '+sedeById(st.sede).name+': '+sedeById(st.sede).addr+'\n\nUn día antes te mando un recordatorio por aquí. Si necesitas cambiarla, solo escríbeme.',()=>{ state={step:'menu'}; backMenu(); });
           } else {
-            agenda[k]={type:'pend',who:st.name,what:s.name}; selDay=st.day; selSede=st.sede; renderDays(); renderSlots(k);
+            agenda[k]={type:'pend',who:st.name,what:s.name,svc:s.id}; selDay=st.day; selSede=st.sede; renderDays(); renderSlots(k);
             setStep('s4','fail');
             notify('warn','!','Cita sin confirmar: el sistema no respondió',st.name+' · '+s.name+' · '+sedeById(st.sede).name+' · '+dayLabel(days[st.day])+' '+st.hour+'. Pásala al sistema y confírmala',
               {label:'Ya la registré, confirmar al paciente',fn:()=>{
-                agenda[k]={type:'bot',who:st.name,what:s.name}; selDay=st.day; selSede=st.sede; renderDays(); renderSlots(k);
+                agenda[k]={type:'bot',who:st.name,what:s.name,svc:s.id}; selDay=st.day; selSede=st.sede; renderDays(); renderSlots(k);
                 notify('ok','✓','Recepción confirmó la cita',st.name+' ya recibió su confirmación');
                 const code='CS-'+(codeN++);
                 botSay('✅ Hola '+st.name.split(' ')[0]+', recepción ya confirmó tu cita.\n\nCódigo: '+code+'\n📅 '+dayLabel(days[st.day])+', '+st.hour+'\n📍 '+sedeById(st.sede).name+': '+sedeById(st.sede).addr+'\n\n¡Te esperamos!',null,500);
