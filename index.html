@@ -59,6 +59,7 @@
   .days{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap}
   .days button{border:1px solid var(--line);background:#fff;border-radius:99px;padding:6px 12px;font:600 13px Inter,sans-serif;cursor:pointer;color:var(--muted)}
   .days button.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .sedes button.on{background:var(--accent);border-color:var(--accent)}
   .slots{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
   .slot{border:1px solid var(--line);border-radius:10px;padding:9px 10px;font-size:13px;min-height:62px;transition:background .4s}
   .slot .h{font-weight:700;font-size:14px}
@@ -153,7 +154,8 @@
 
     <div class="card">
       <h2>Agenda de la clínica</h2>
-      <p class="sub">Dra. Paredes (ejemplo) · Verde = agendada por el agente · Naranja = falta que recepción la confirme</p>
+      <p class="sub"><span id="docName"></span> · Verde = agendada por el agente · Naranja = falta que recepción la confirme</p>
+      <div class="days sedes" id="sedes"></div>
       <div class="days" id="days"></div>
       <div class="slots" id="slots"></div>
     </div>
@@ -206,10 +208,16 @@
   const DAYNAMES = ['domingo','lunes','martes','miércoles','jueves','viernes','sábado'];
   const MONTHS = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
   const SEED_BUSY = [['Rosa M.','Limpieza dental'],['Jorge T.','Consulta general'],['Ana L.','Ortodoncia'],['Luis P.','Consulta general'],['Carla V.','Blanqueamiento'],['Pedro S.','Limpieza dental']];
+  const SEDES = [
+    {id:'ate', name:'Sede Ate', addr:'Av. Ejemplo 123, Ate (frente al parque)', doc:'Dra. Paredes', busy:[[0,1],[0,4],[0,6],[1,0],[1,2],[1,5],[2,3],[2,7]]},
+    {id:'sa', name:'Sede Santa Anita', addr:'Av. Ejemplo 456, Santa Anita', doc:'Dr. Quispe', busy:[[0,0],[0,2],[0,3],[0,5],[0,7],[1,1],[1,4],[2,0],[2,6]]},
+    {id:'lm', name:'Sede La Molina', addr:'Av. Ejemplo 789, La Molina', doc:'Dra. Salazar', busy:[[0,6],[1,3],[1,7],[2,2],[2,5]]}
+  ];
+  const sedeById = id => SEDES.find(s=>s.id===id);
 
   const $ = id => document.getElementById(id);
   const chat=$('chat'), feed=$('feed');
-  let days=[], agenda={}, selDay=0, state={}, codeN=1040, pendingSlots={};
+  let days=[], agenda={}, selDay=0, selSede='ate', state={}, codeN=1040, pendingSlots={};
 
   function nextWorkdays(n){
     const out=[]; const d=new Date(); d.setHours(0,0,0,0);
@@ -217,13 +225,12 @@
     return out;
   }
   function dayLabel(d){ return DAYNAMES[d.getDay()][0].toUpperCase()+DAYNAMES[d.getDay()].slice(1)+' '+d.getDate()+' '+MONTHS[d.getMonth()]; }
-  function key(i,h){ return i+'|'+h; }
+  function key(s,i,h){ return s+'|'+i+'|'+h; }
   function now(){ const d=new Date(); return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); }
 
   function init(){
-    days=nextWorkdays(3); agenda={}; selDay=0; state={step:'menu'}; pendingSlots={};
-    const busyPattern=[[0,1],[0,4],[0,6],[1,0],[1,2],[1,5],[2,3],[2,7]];
-    busyPattern.forEach((p,i)=>{ const s=SEED_BUSY[i%SEED_BUSY.length]; agenda[key(p[0],HOURS[p[1]])]={type:'busy',who:s[0],what:s[1]}; });
+    days=nextWorkdays(3); agenda={}; selDay=0; selSede='ate'; state={step:'menu'}; pendingSlots={};
+    SEDES.forEach((sd,j)=>sd.busy.forEach((p,i)=>{ const s=SEED_BUSY[(i+j)%SEED_BUSY.length]; agenda[key(sd.id,p[0],HOURS[p[1]])]={type:'busy',who:s[0],what:s[1]}; }));
     chat.innerHTML=''; feed.innerHTML='<div class="empty" id="feedEmpty">Todavía no hay avisos.</div>';
     resetSteps(); renderDays(); renderSlots();
     setTimeout(()=>botSay('¡Hola! 👋 Soy el asistente virtual de Clínica Dental Sonríe.\nTe puedo ayudar a ver precios, agendar tu cita o resolver dudas. ¿Qué necesitas?', mainMenu), 300);
@@ -231,13 +238,16 @@
 
   /* ---------- Agenda panel ---------- */
   function renderDays(){
+    const sb=$('sedes'); sb.innerHTML='';
+    SEDES.forEach(sd=>{ const b=document.createElement('button'); b.textContent=sd.name; if(sd.id===selSede) b.className='on'; b.onclick=()=>{selSede=sd.id;renderDays();renderSlots();}; sb.appendChild(b); });
+    $('docName').textContent=sedeById(selSede).name+' · '+sedeById(selSede).doc+' (ejemplo)';
     const box=$('days'); box.innerHTML='';
     days.forEach((d,i)=>{ const b=document.createElement('button'); b.textContent=dayLabel(d); if(i===selDay) b.className='on'; b.onclick=()=>{selDay=i;renderDays();renderSlots();}; box.appendChild(b); });
   }
   function renderSlots(flashKey){
     const box=$('slots'); box.innerHTML='';
     HOURS.forEach(h=>{
-      const k=key(selDay,h), a=agenda[k], el=document.createElement('div');
+      const k=key(selSede,selDay,h), a=agenda[k], el=document.createElement('div');
       if(!a){ el.className='slot free'; el.innerHTML='<span class="h">'+h+'</span><span class="who" style="color:var(--muted)">Libre</span>'; }
       else if(a.type==='busy'){ el.className='slot busy'; el.innerHTML='<span class="h">'+h+'</span><span class="who">'+a.who+'</span><small>'+a.what+'</small>'; }
       else if(a.type==='bot'){ el.className='slot bot'; el.innerHTML='<span class="h">'+h+'</span><span class="who">'+esc(a.who)+'</span><small>'+a.what+'</small><br><span class="src">Agendada por el agente</span>'; }
@@ -246,7 +256,8 @@
       box.appendChild(el);
     });
   }
-  function freeHours(i){ return HOURS.filter(h=>!agenda[key(i,h)]); }
+  function freeHours(s,i){ return HOURS.filter(h=>!agenda[key(s,i,h)]); }
+  function freeInSede(s){ return days.reduce((n,d,i)=>n+freeHours(s,i).length,0); }
 
   /* ---------- Feed ---------- */
   function notify(kind,icon,title,detail,action){
@@ -291,7 +302,7 @@
     botSay(txt,backMenu,900);
   }
   function showInfo(){
-    botSay('🕘 Atendemos de lunes a sábado.\nMañanas de 9:00 a 13:00 y tardes de 15:00 a 19:00.\n\n📍 Av. Ejemplo 123, Ate (frente al parque).\nPuedes pagar con efectivo, tarjeta o Yape.',backMenu,900);
+    botSay('🕘 Atendemos de lunes a sábado.\nMañanas de 9:00 a 13:00 y tardes de 15:00 a 19:00.\n\nTenemos '+SEDES.length+' sedes:\n'+SEDES.map(s=>'📍 '+s.name+': '+s.addr).join('\n')+'\n\nPuedes pagar con efectivo, tarjeta o Yape.',backMenu,900);
   }
   function human(){
     state.step='human';
@@ -311,21 +322,33 @@
     botSay('¡Perfecto! ¿Qué servicio necesitas?',()=>choices(SERVICES.map(s=>[s.name,()=>pickService(s)])));
   }
   function pickService(s){
-    state.service=s; state.step='day';
+    state.service=s;
+    if(SEDES.length===1){ return pickSede(SEDES[0].id); }
+    state.step='sede';
+    botSay('¿En qué sede te queda mejor atenderte? 📍\n\n'+SEDES.map(sd=>'• '+sd.name+': '+sd.addr).join('\n'),()=>choices(SEDES.map(sd=>[sd.name,()=>pickSede(sd.id)])));
+  }
+  function pickSede(id){
+    const sd=sedeById(id);
+    state.sede=id; state.step='day'; selSede=id; renderDays(); renderSlots();
     setStep('s1','on');
-    botSay('Estoy revisando la agenda de la doctora… 🔎',()=>{
-      const opts=days.map((d,i)=>[dayLabel(d)+' ('+freeHours(i).length+' libres)',()=>pickDay(i)]).filter((o,i)=>freeHours(i).length>0);
-      botSay('Estos días tienen espacio:',()=>choices(opts),600);
+    botSay('Estoy revisando la agenda de '+sd.name+'… 🔎',()=>{
+      const opts=days.map((d,i)=>[dayLabel(d)+' ('+freeHours(id,i).length+' libres)',()=>pickDay(i)]).filter((o,i)=>freeHours(id,i).length>0);
+      if(!opts.length){
+        const others=SEDES.filter(x=>x.id!==id && freeInSede(x.id)>0);
+        botSay('Esta semana '+sd.name+' ya no tiene espacio. 😕 ¿Te sirve otra sede?',()=>choices(others.map(x=>[x.name,()=>pickSede(x.id)])),600);
+        return;
+      }
+      botSay('Estos días tienen espacio en '+sd.name+':',()=>choices(opts),600);
     },600);
   }
   function pickDay(i){
-    state.day=i; state.step='hour'; selDay=i; renderDays(); renderSlots();
-    const fh=freeHours(i);
+    state.day=i; state.step='hour'; selDay=i; selSede=state.sede; renderDays(); renderSlots();
+    const fh=freeHours(state.sede,i);
     setStep('s1','done');
-    botSay('Para el '+dayLabel(days[i])+' tengo estos horarios libres:',()=>choices(fh.map(h=>[h,()=>pickHour(h)])));
+    botSay('Para el '+dayLabel(days[i])+' en '+sedeById(state.sede).name+' tengo estos horarios libres:',()=>choices(fh.map(h=>[h,()=>pickHour(h)])));
   }
   function pickHour(h){
-    if(agenda[key(state.day,h)]){ botSay('Uy, ese horario se acaba de ocupar. Elige otro, por favor:',()=>choices(freeHours(state.day).map(x=>[x,()=>pickHour(x)]))); return; }
+    if(agenda[key(state.sede,state.day,h)]){ botSay('Uy, ese horario se acaba de ocupar. Elige otro, por favor:',()=>choices(freeHours(state.sede,state.day).map(x=>[x,()=>pickHour(x)]))); return; }
     state.hour=h; state.step='name';
     botSay('Genial. ¿A nombre de quién reservo la cita? Escribe nombre y apellido. ✍️');
   }
@@ -335,10 +358,10 @@
   }
   function confirmData(){
     const s=state.service, d=days[state.day];
-    botSay('Te confirmo los datos:\n\n👤 '+state.name+'\n🦷 '+s.name+' ('+s.price+')\n📅 '+dayLabel(d)+', '+state.hour+'\n\n¿Está bien?',()=>choices([['✅ Sí, agendar',save],['Cambiar horario',()=>pickDay(state.day)]]));
+    botSay('Te confirmo los datos:\n\n👤 '+state.name+'\n🦷 '+s.name+' ('+s.price+')\n📅 '+dayLabel(d)+', '+state.hour+'\n📍 '+sedeById(state.sede).name+'\n\n¿Está bien?',()=>choices([['✅ Sí, agendar',save],['Cambiar horario',()=>pickDay(state.day)]]));
   }
   function save(){
-    const k=key(state.day,state.hour), s=state.service, st={...state};
+    const k=key(state.sede,state.day,state.hour), s=state.service, st={...state};
     setStep('s2','on');
     botSay('Guardando tu cita en el sistema de la clínica… ⏳',()=>{
       setTimeout(()=>{
@@ -346,22 +369,22 @@
         setStep('s2','done'); setStep('s3', failed?'fail':'on');
         setTimeout(()=>{
           if(!failed){
-            agenda[k]={type:'bot',who:st.name,what:s.name}; selDay=st.day; renderDays(); renderSlots(k);
+            agenda[k]={type:'bot',who:st.name,what:s.name}; selDay=st.day; selSede=st.sede; renderDays(); renderSlots(k);
             setStep('s3','done'); setStep('s4','done');
             const code='CS-'+(codeN++);
-            notify('ok','✓','Nueva cita agendada por el agente',st.name+' · '+s.name+' · '+dayLabel(days[st.day])+' '+st.hour+' · código '+code);
-            botSay('✅ ¡Listo! Tu cita quedó registrada en la agenda de la clínica.\n\nCódigo: '+code+'\n📅 '+dayLabel(days[st.day])+', '+st.hour+'\n\nUn día antes te mando un recordatorio por aquí. Si necesitas cambiarla, solo escríbeme.',()=>{ state={step:'menu'}; backMenu(); });
+            notify('ok','✓','Nueva cita agendada por el agente',st.name+' · '+s.name+' · '+sedeById(st.sede).name+' · '+dayLabel(days[st.day])+' '+st.hour+' · código '+code);
+            botSay('✅ ¡Listo! Tu cita quedó registrada en la agenda de la clínica.\n\nCódigo: '+code+'\n📅 '+dayLabel(days[st.day])+', '+st.hour+'\n📍 '+sedeById(st.sede).name+': '+sedeById(st.sede).addr+'\n\nUn día antes te mando un recordatorio por aquí. Si necesitas cambiarla, solo escríbeme.',()=>{ state={step:'menu'}; backMenu(); });
           } else {
-            agenda[k]={type:'pend',who:st.name,what:s.name}; selDay=st.day; renderDays(); renderSlots(k);
+            agenda[k]={type:'pend',who:st.name,what:s.name}; selDay=st.day; selSede=st.sede; renderDays(); renderSlots(k);
             setStep('s4','fail');
-            notify('warn','!','Cita sin confirmar: el sistema no respondió',st.name+' · '+s.name+' · '+dayLabel(days[st.day])+' '+st.hour+'. Pásala al sistema y confírmala',
+            notify('warn','!','Cita sin confirmar: el sistema no respondió',st.name+' · '+s.name+' · '+sedeById(st.sede).name+' · '+dayLabel(days[st.day])+' '+st.hour+'. Pásala al sistema y confírmala',
               {label:'Ya la registré, confirmar al paciente',fn:()=>{
-                agenda[k]={type:'bot',who:st.name,what:s.name}; selDay=st.day; renderDays(); renderSlots(k);
+                agenda[k]={type:'bot',who:st.name,what:s.name}; selDay=st.day; selSede=st.sede; renderDays(); renderSlots(k);
                 notify('ok','✓','Recepción confirmó la cita',st.name+' ya recibió su confirmación');
                 const code='CS-'+(codeN++);
-                botSay('✅ Hola '+st.name.split(' ')[0]+', recepción ya confirmó tu cita.\n\nCódigo: '+code+'\n📅 '+dayLabel(days[st.day])+', '+st.hour+'\n\n¡Te esperamos!',null,500);
+                botSay('✅ Hola '+st.name.split(' ')[0]+', recepción ya confirmó tu cita.\n\nCódigo: '+code+'\n📅 '+dayLabel(days[st.day])+', '+st.hour+'\n📍 '+sedeById(st.sede).name+': '+sedeById(st.sede).addr+'\n\n¡Te esperamos!',null,500);
               }});
-            botSay('Tu horario ('+dayLabel(days[st.day])+', '+st.hour+') ya quedó apartado, pero el sistema de la clínica no me respondió para confirmarlo. 🙏\n\nYa le avisé a recepción: te escriben por aquí en unos minutos con la confirmación final.',()=>{ state={step:'menu'}; });
+            botSay('Tu horario ('+sedeById(st.sede).name+', '+dayLabel(days[st.day])+', '+st.hour+') ya quedó apartado, pero el sistema de la clínica no me respondió para confirmarlo. 🙏\n\nYa le avisé a recepción: te escriben por aquí en unos minutos con la confirmación final.',()=>{ state={step:'menu'}; });
           }
         },700);
       },900);
